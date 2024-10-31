@@ -1,0 +1,85 @@
+pipeline{
+    agent any
+
+    environment{
+        DOCKER_REGISTRY='chrispined/nodeApp'
+        K8s_NAMESPACE='$params.ENV'
+        KUBE_CONFIG_CRED=credentials('k8s-creds-config')
+   
+    }
+
+    parameters{
+        choice(name: 'ENV', choices["staging", "production"], description: 'Choose the deployment environment')
+        string(name: 'DOCKER_TAG', defaultValue: 'latest', description: 'Specify the image tag')
+
+    }
+
+    stages{
+        stage("Checkout SCM"){
+            steps{
+                git branch: "main", url: ""
+            }
+        }
+
+        stage("Install dependencies"){
+            steps{
+                sh 'npm install'
+            }
+        }
+        
+        stage("Run Test"){
+          parallel{
+              stage("Unit Test"){
+                  steps{
+                      sh "npm run test:unit"
+                   }
+               }
+
+              stage("Integration Test"){
+                  steps{
+                      sh 'npm run test:integration'
+                   }
+               }
+           }
+        }
+
+        stage("SonarQube Analysis"){
+            steps{
+                script{
+                    withSonarQubeEnv('sonarQue'){
+                        sh 'sonar-scanner -Dsonar.projectKey=nodeapp -Dsonar.sources=. -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_AUTH_TOKEN'
+                    }
+                }
+            }
+        }
+
+        stage("Build image"){
+            steps{
+                sh 'docker build -t ${DOCKER_REGISTRY}:${params.DOCKER_TAG} .'
+            }
+        }
+
+        stage("Push image"){
+            steps{
+                sh 'docker push ${DOCKER_REGISTRY}:{params.DOCKER_TAG} '
+            }
+        }
+
+        stage("Deploy to K8s"){
+            steps{
+                sh 'kubectl apply -k ./production'
+            }
+        }
+    }
+    post{
+        always{
+            echo "========always========"
+        }
+        success{
+            echo "========pipeline executed successfully ========"
+        }
+        failure{
+            echo "========pipeline execution failed========"
+        }
+    }
+}
